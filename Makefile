@@ -13,7 +13,7 @@ $(NAME): $(OBJFILES)
 	$(CC) $^ -o $(NAME) $(LIBS) -ggdb
 
 build/%.o: src/%.c
-	$(CC) $(CFLAGS) -c $< -o $@ $(LIBS) -ggdb
+	$(CC) -c $< -o $@ $(LIBS) -ggdb
 
 clean:
 	$(RM) $(wildcard $(OBJFILES) $(NAME))
