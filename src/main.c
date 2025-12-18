@@ -91,7 +91,7 @@ static void _compute_op(struct array *compute_stack, struct array *history,
             if (v->likely_int && w.likely_int) {
               w.in = OPERANDS[i].in_op(v->in, w.in);
               w.dbl = (double)w.in;
-              w.print = v->print == w.print ? w.print : KIND_DECIMAL;
+              w.print = v->print;
             }
           } else {
             if (w.likely_int && v->likely_int && OPERANDS[i].in_op) {
@@ -161,12 +161,13 @@ static void _compute_op(struct array *compute_stack, struct array *history,
   if (w) {
     memcpy(&op->result, w, sizeof(*w));
   }
+  array_reset(compute_stack);
   free(str);
 }
 
 static void _print_op(struct ncplane *plane, struct calc_op *op, size_t ypos) {
   char line[200];
-  ncplane_hline(plane, &(struct nccell)NCCELL_CHAR_INITIALIZER(' '), op->width);
+
   ncplane_cursor_move_yx(plane, ypos, 0);
   ncplane_set_fg_rgb8(plane, 128, 128, 128);
   snprintf(line, 200, "%03d | ", op->reg);
@@ -257,6 +258,7 @@ int main(int argc, char **argv) {
 
     if (id == NCKEY_RESIZE) {
       notcurses_refresh(nc, &rows, &cols);
+      ncplane_erase(notcurses_stdplane(nc));
       for (size_t i = array_size(history); i > 0; i--) {
         _print_op(notcurses_stdplane(nc), array_get(history, i - 1),
                   array_size(history) - i + 1);
@@ -302,6 +304,7 @@ int main(int argc, char **argv) {
         ncplane_putnstr(input_field, input.length, input.content);
         notcurses_cursor_enable(nc, ncplane_cursor_y(input_field),
                                 ncplane_cursor_x(input_field));
+        ncplane_erase(notcurses_stdplane(nc));
         for (size_t i = array_size(history); i > 0; i--) {
           _print_op(notcurses_stdplane(nc), array_get(history, i - 1),
                     array_size(history) - i + 1);
