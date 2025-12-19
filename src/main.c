@@ -33,6 +33,7 @@ struct calc_op {
   int width;
   int reg;
   char *expression;
+  bool highlight;
   struct calc_value result;
 };
 
@@ -47,6 +48,7 @@ struct txt_input {
   size_t capacity;
 };
 
+unsigned int rows = 0, cols = 0;
 static uint64_t _hex_decode(char *ptr) {
   const char *d = "0123456789abcdefABCDEF";
   uint64_t r = 0;
@@ -166,11 +168,24 @@ static void _compute_op(struct array *compute_stack, struct array *history,
 }
 
 static void _print_op(struct ncplane *plane, struct calc_op *op, size_t ypos) {
-  char line[200];
 
+  char line[200];
+  ncplane_set_bg_alpha(plane, 255);
+  uint64_t x = 0;
+  ncchannels_set_fg_rgb8(&x, 128, 128, 127);
+  if (op->highlight) {
+    ncchannels_set_bg_rgb8(&x, 60, 60, 0);
+    ncplane_set_bg_rgb8(plane, 60, 60, 0);
+  } else {
+    ncchannels_set_bg_rgb8(&x, 0, 0, 0);
+    ncplane_set_bg_rgb8(plane, 0, 0, 0);
+  }
+  struct nccell c = NCCELL_INITIALIZER(' ', NCSTYLE_NONE, x);
+  ncplane_cursor_move_yx(plane, ypos, 0);
+  ncplane_hline(plane, &c, cols);
   ncplane_cursor_move_yx(plane, ypos, 0);
   ncplane_set_fg_rgb8(plane, 128, 128, 128);
-  snprintf(line, 200, "%03d | ", op->reg);
+  snprintf(line, 200, "%s%03d | ", op->highlight ? "•" : " ", op->reg);
   ncplane_putstr(plane, line);
   ncplane_set_fg_rgb8(plane, 0, 255, 0);
   switch (op->result.print) {
@@ -226,7 +241,6 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
 
-  unsigned int rows = 0, cols = 0;
   ncplane_dim_yx(notcurses_stdplane(nc), &rows, &cols);
 
   uint64_t input_channel = 0;
@@ -249,7 +263,7 @@ int main(int argc, char **argv) {
   int y = 0;
   struct txt_input input = {0};
   _init_txt_prompt(&input);
-
+  int y_highlight = 0;
   do {
     struct ncinput event;
 
@@ -266,7 +280,7 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    if (*event.utf8 == '\0') {
+    if (*event.utf8 == '\0' || *event.utf8 == '\033') {
       switch (event.id) {
       case NCKEY_BACKSPACE: {
         if (input.length <= 2) {
@@ -282,8 +296,58 @@ int main(int argc, char **argv) {
         notcurses_cursor_enable(nc, 0, ncplane_cursor_x(input_field));
 
       } break;
+      case NCKEY_DOWN: {
+        if (array_size(history) <= 0) {
+          break;
+        }
+        if (y_highlight > 0) {
+          struct calc_op *p = array_get(history, y_highlight - 1);
+          p->highlight = false;
+        }
+        if (y_highlight - 1 <= 0) {
+          y_highlight = array_size(history);
+        } else {
+          y_highlight--;
+        }
+        struct calc_op *c = array_get(history, y_highlight - 1);
+        c->highlight = true;
+      } break;
+
+      case NCKEY_ESC: {
+        if (y_highlight > 0) {
+          struct calc_op *p = array_get(history, y_highlight - 1);
+          p->highlight = false;
+        }
+        y_highlight = 0;
+      } break;
+      case NCKEY_UP: {
+        if (array_size(history) <= 0) {
+          break;
+        }
+        if (y_highlight > 0) {
+          struct calc_op *p = array_get(history, y_highlight - 1);
+          p->highlight = false;
+        }
+        if (y_highlight + 1 > array_size(history)) {
+          y_highlight = 1;
+        } else {
+          y_highlight++;
+        }
+        struct calc_op *c = array_get(history, y_highlight - 1);
+        c->highlight = true;
+      } break;
 
       case NCKEY_RETURN: {
+        if (y_highlight > 0) {
+          struct calc_op *p = array_get(history, y_highlight - 1);
+          p->highlight = false;
+          _init_txt_prompt(&input);
+          memcpy(input.content + 2, p->expression, strlen(p->expression) + 1);
+          input.content[strlen(p->expression) + 2] = '\0';
+          input.length = strlen(p->expression) + 2;
+          y_highlight = 0;
+          break;
+        }
         if (input.length <= 2) {
           break;
         }
@@ -293,27 +357,29 @@ int main(int argc, char **argv) {
         }
 
         struct calc_op new_op = {0};
+
         new_op.expression = strndup(input.content + 2, input.length - 2);
         new_op.reg = array_size(history) + 1;
         _compute_op(compute_stack, history, &new_op);
 
         array_push(history, &new_op);
         _init_txt_prompt(&input);
-
-        ncplane_erase(input_field);
-        ncplane_putnstr(input_field, input.length, input.content);
-        notcurses_cursor_enable(nc, ncplane_cursor_y(input_field),
-                                ncplane_cursor_x(input_field));
-        ncplane_erase(notcurses_stdplane(nc));
-        for (size_t i = array_size(history); i > 0; i--) {
-          _print_op(notcurses_stdplane(nc), array_get(history, i - 1),
-                    array_size(history) - i + 1);
-        }
-
-        y++;
-        notcurses_render(nc);
       } break;
       }
+
+      ncplane_erase(input_field);
+      ncplane_putnstr(input_field, input.length, input.content);
+      notcurses_cursor_enable(nc, ncplane_cursor_y(input_field),
+                              ncplane_cursor_x(input_field));
+      ncplane_erase(notcurses_stdplane(nc));
+      for (size_t i = array_size(history); i > 0; i--) {
+        _print_op(notcurses_stdplane(nc), array_get(history, i - 1),
+                  array_size(history) - i + 1);
+      }
+
+      y++;
+      notcurses_render(nc);
+
     } else {
       const size_t clen = strlen(event.utf8);
       if (input.capacity < input.length + clen + 1) {
